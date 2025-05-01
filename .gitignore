@@ -1,2 +1,5 @@
 /smpl/amass/
 /smpl/models/
+*.csv
+*.pt
+__pycache__/
