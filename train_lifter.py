@@ -181,7 +181,8 @@ def train(args):
             bones_pred = bone_lengths(pred, SKELETON_EDGES)
             bones_gt   = bone_lengths(y3d,  SKELETON_EDGES)
             loss_b = (bones_pred - bones_gt).abs().mean()
-            loss_r = reprojection_loss(y3d, x2d, K_pix)
+            loss_r_px = reprojection_loss(pred, x2d, K_pix)            # pixels
+            loss_r    = loss_r_px / IMG_W                              # normalised
 
             loss = loss_m + 0.1*loss_b + 0.1*loss_r
 
@@ -192,8 +193,9 @@ def train(args):
             train_losses.append((loss_m.item(), loss_b.item(), loss_r.item()))
             pbar.set_postfix({
                 'MPJPE': f"{loss_m.item():.4f}",
-                'Bone':  f"{loss_b.item():.4f}",
-                'Reproj':f"{loss_r.item():.2f}"
+                'Bone' : f"{loss_b.item():.4f}",
+                'Reproj(px)': f"{loss_r_px.item():.0f}",
+                'Reproj(n)':  f"{loss_r.item():.4f}",
             })
 
         sched.step()
@@ -218,7 +220,10 @@ def train(args):
                 bones_pred = bone_lengths(pred, SKELETON_EDGES)
                 bones_gt   = bone_lengths(y3d,  SKELETON_EDGES)
                 loss_b = (bones_pred - bones_gt).abs().mean()
-                loss_r = reprojection_loss(pred, x2d, K_pix)
+
+
+                loss_r_px = reprojection_loss(pred, x2d, K_pix)            # pixels
+                loss_r    = loss_r_px / IMG_W                              # normalised
 
                 val_metrics.append((loss_m.item(), loss_b.item(), loss_r.item()))
 
