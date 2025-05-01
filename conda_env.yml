@@ -1,0 +1,12 @@
+name: pose_lifter_py38
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.8
+  - numpy
+  - pandas
+  - opencv-python
+  - pip
+  - pip:
+      - torch==2.1.0
