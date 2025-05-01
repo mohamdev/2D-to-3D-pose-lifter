@@ -54,6 +54,8 @@ class AugmentedNPZDataset(Dataset):
         y3d = data['joints_3d'][    f_start:f_start+T]  # (T,J,3)
         seg = data['segments_lengths'][f_start]         # (S,1)
         K_pix = data['K'][p]                            # (3,3)
+        R_pix = data['R'][p] 
+        t_pix = data['t'][p] 
 
         # normalize intrinsics → k_vec
         f_norm  = K_pix[0,0] / 2000.0
@@ -71,6 +73,8 @@ class AugmentedNPZDataset(Dataset):
             'k'    : torch.from_numpy(k_vec),              
             'seg'  : torch.from_numpy(seg_vec),            
             'K_pix': torch.from_numpy(K_pix.astype(np.float32)),
+            'R_pix': torch.from_numpy(R_pix.astype(np.float32)),
+            't_pix': torch.from_numpy(t_pix.astype(np.float32)),
         }
 
 # ---------- MODEL ----------
@@ -143,6 +147,24 @@ def reprojection_loss(pred3d, x2d, K):
     x2d_px = x2d[:,0] * IMG_W        # (B,J,2)
     return (uv - x2d_px).abs().mean()
 
+def full_reprojection_loss(pred3d, x2d, K, R, t):
+    B,T,J,_ = pred3d.shape
+    pts = pred3d[:,0].reshape(B*J,3)         # (B·J,3)
+
+    R_b = R.unsqueeze(1).expand(B,J,3,3).reshape(-1,3,3)
+    t_b = t.unsqueeze(1).expand(B,J,3).reshape(-1,3)
+
+    cam_pts = (R_b @ pts.unsqueeze(-1)).squeeze(-1) + t_b  # (B·J,3)
+    K_b     = K.unsqueeze(1).expand(B,J,3,3).reshape(-1,3,3)
+
+    uvw = (K_b @ cam_pts.unsqueeze(-1)).squeeze(-1)
+    uv  = uvw[:,:2] / (uvw[:,2:]+1e-8)
+    uv  = uv.reshape(B,J,2)
+
+    x2d_px = x2d[:,0] * IMG_W
+    return (uv - x2d_px).abs().mean()
+
+
 # ---------- TRAINING LOOP ----------
 def train(args):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -168,6 +190,7 @@ def train(args):
     sched = CosineAnnealingLR(opt, T_max=args.epochs)
 
     best_val = float('inf')
+    n_lifters = 0
     for epoch in range(1, args.epochs+1):
         # --- TRAIN ---
         model.train()
@@ -179,6 +202,8 @@ def train(args):
             k     = batch['k'].to(device)
             seg   = batch['seg'].to(device)
             K_pix = batch['K_pix'].to(device)
+            R_pix = batch['R_pix'].to(device)
+            t_pix = batch['t_pix'].to(device)
 
             pred = model(x2d, k, seg)
 
@@ -187,10 +212,10 @@ def train(args):
             bones_pred = bone_lengths(pred, SKELETON_EDGES)
             bones_gt   = bone_lengths(y3d,  SKELETON_EDGES)
             loss_b = (bones_pred - bones_gt).abs().mean()
-            loss_r_px = reprojection_loss(pred, x2d, K_pix)            # pixels
+            loss_r_px = full_reprojection_loss(pred, x2d, K_pix, R_pix, t_pix)            # pixels
             loss_r    = loss_r_px / IMG_W                              # normalised
 
-            loss = loss_m + 0.1*loss_b + 0.0*loss_r
+            loss = loss_m + 1.0*loss_b + 0.0*loss_r
 
             opt.zero_grad()
             loss.backward()
@@ -238,8 +263,9 @@ def train(args):
         # save best
         if vm < best_val:
             best_val = vm
-            torch.save(model.state_dict(), 'best_lifter.pt')
+            torch.save(model.state_dict(), f"best_lifter{n_lifters}.pt")
             print(f"→ Saved best model (Val MPJPE={best_val:.4f} m)")
+            n_lifters+=n_lifters
 
     print("Training done.")
 

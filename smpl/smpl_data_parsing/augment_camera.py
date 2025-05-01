@@ -7,8 +7,8 @@ import cv2
 import pandas as pd
 
 # --- USER CONFIG ---
-M_EXTR       = 5               # number of distinct extrinsics per clip
-L_INTR       = 4               # number of distinct intrinsics per extrinsic
+M_EXTR       = 30               # number of distinct extrinsics per clip
+L_INTR       = 10               # number of distinct intrinsics per extrinsic
 IMG_W, IMG_H = 1920, 1080      # synthetic image resolution
 F_MIN, F_MAX = 800, 1400       # focal-length range (px)
 D_MAX        = 6.0             # maximum camera distance (m)
