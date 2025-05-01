@@ -89,7 +89,7 @@ def compute_and_save(npz_path):
         data[f'{jname}_x'] = centered[:, 0]
         data[f'{jname}_y'] = centered[:, 1]
         data[f'{jname}_z'] = centered[:, 2]
-        
+
     # 6. Compute mean segment lengths
     def dist(a, b):
         return np.linalg.norm(a - b, axis=1)
@@ -138,3 +138,5 @@ def compute_and_save(npz_path):
 for fname in sorted(os.listdir(raw_dir)):
     if fname.lower().endswith('.npz'):
         compute_and_save(os.path.join(raw_dir, fname))
+
+
