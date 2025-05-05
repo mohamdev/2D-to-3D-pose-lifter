@@ -9,8 +9,10 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
+import bisect
 
-# ------- CONFIG -------
+print("starting")
+#i ------- CONFIG -------
 J = 12      # joints
 S = 6       # segments
 T = 13      # temporal window
@@ -31,51 +33,105 @@ SKELETON_EDGES = [
     (0, 6), (1, 7),   # torso sides
 ]
 
-# ---------- DATASET ----------
+
+import os, glob, bisect
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+
 class AugmentedNPZDataset(Dataset):
-    def __init__(self, npz_dir, window=T):
-        self.window = window
-        self.index = []
-        for npz_path in glob.glob(os.path.join(npz_dir, '*.npz')):
-            data = np.load(npz_path)
-            P, F, _, _ = data['joints_2d'].shape
-            for p in range(P):
-                for f_start in range(F - window + 1):
-                    self.index.append((npz_path, p, f_start))
+    """
+    Memory-frugal dataset for the ‘augmented_npz_grid’ format,
+    now with logging so you can see what's happening under the hood.
+    """
+    def __init__(self,
+                 npz_dir: str,
+                 window: int = 13,
+                 *,
+                 img_wh: tuple[int, int] = (1920, 1080),
+                 return_extrinsics: bool = True):
+        print(f"[Dataset] Initializing from {npz_dir!r} with window={window}")
+        self.window            = int(window)
+        self.W, self.H         = img_wh
+        self.return_extrinsics = bool(return_extrinsics)
 
-    def __len__(self):
-        return len(self.index)
+        self.meta        = []
+        self.cum_windows = []
+        total_windows    = 0
 
-    def __getitem__(self, idx):
-        npz_path, p, f_start = self.index[idx]
-        data = np.load(npz_path)
+        # 1) scan all files, build tiny index
+        for path in sorted(glob.glob(os.path.join(npz_dir, '*.npz'))):
+            d = np.load(path, mmap_mode='r')
+            P, F, _, _ = d['joints_2d'].shape
+            n_f        = max(F - self.window + 1, 0)
+            n_w        = P * n_f
+            if n_w == 0:
+                print(f"[Dataset]  → skip {os.path.basename(path)} (too short)")
+                continue
 
-        x2d = data['joints_2d'][p, f_start:f_start+T]    # (T,J,2)
-        y3d = data['joints_3d'][    f_start:f_start+T]  # (T,J,3)
-        seg = data['segments_lengths'][f_start]         # (S,1)
-        K_pix = data['K'][p]                            # (3,3)
-        R_pix = data['R'][p] 
-        t_pix = data['t'][p] 
+            print(f"[Dataset]  → file {os.path.basename(path)}: P={P}, F={F}, windows={n_w}")
+            self.meta.append({
+                'path': path,
+                'P'   : P,
+                'F'   : F,
+                'n_f' : n_f,
+                'n_w' : n_w,
+            })
+            self.cum_windows.append(total_windows)
+            total_windows += n_w
 
-        # normalize intrinsics → k_vec
-        f_norm  = K_pix[0,0] / 2000.0
-        cx_norm = (K_pix[0,2] - IMG_W/2) / IMG_W
-        cy_norm = (K_pix[1,2] - IMG_H/2) / IMG_H
-        k_vec = np.array([f_norm, cx_norm, cy_norm], dtype=np.float32)
+        self.total_windows = total_windows
+        print(f"[Dataset] Done init: {len(self.meta)} files, "
+              f"{self.total_windows} total windows.\n")
 
-        # normalize segments & 2D
-        seg_vec   = seg.squeeze() / 2.0      # (S,)
-        x2d_norm  = x2d.astype(np.float32) / IMG_W
+        if self.total_windows == 0:
+            raise RuntimeError(f'No windows found in “{npz_dir}”')
 
-        return {
-            'x2d'  : torch.from_numpy(x2d_norm),           
-            'y3d'  : torch.from_numpy(y3d.astype(np.float32)),
-            'k'    : torch.from_numpy(k_vec),              
-            'seg'  : torch.from_numpy(seg_vec),            
-            'K_pix': torch.from_numpy(K_pix.astype(np.float32)),
-            'R_pix': torch.from_numpy(R_pix.astype(np.float32)),
-            't_pix': torch.from_numpy(t_pix.astype(np.float32)),
+    def __len__(self) -> int:
+        return self.total_windows
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        # 2) locate which file & which window
+        file_idx = bisect.bisect_right(self.cum_windows, idx) - 1
+        meta     = self.meta[file_idx]
+        local    = idx - self.cum_windows[file_idx]
+        p        = local // meta['n_f']
+        f_start  = local %  meta['n_f']
+        f_end    = f_start + self.window
+
+        # log the first few mappings
+        if idx < 5:
+            print(f"[Dataset]  idx={idx} → file#{file_idx} "
+                  f"{os.path.basename(meta['path'])}, cam={p}, f_start={f_start}")
+
+        # 3) load & slice
+        data = np.load(meta['path'], mmap_mode='r')
+        x2d  = data['joints_2d'][p, f_start:f_end]     # (T,J,2)
+        y3d  = data['joints_3d'][   f_start:f_end]     # (T,J,3)
+        seg  = data['segments_lengths'][f_start]       # (S,1)
+        K    = data['K'][p]                            # (3,3)
+
+        # 4) normalise intrinsics → k_vec
+        f_norm  =  K[0,0] / 2000.0
+        cx_norm = (K[0,2] - self.W/2) / self.W
+        cy_norm = (K[1,2] - self.H/2) / self.H
+        k_vec   = np.asarray([f_norm, cx_norm, cy_norm], dtype=np.float32)
+
+        # 5) package as torch.Tensors
+        sample = {
+            'x2d'  : torch.from_numpy(x2d.astype(np.float32) / self.W),  # (T,J,2)
+            'y3d'  : torch.from_numpy(y3d.astype(np.float32)),          # (T,J,3)
+            'k'    : torch.from_numpy(k_vec),                           # (3,)
+            'seg'  : torch.from_numpy(seg.squeeze().astype(np.float32) / 2.0),  # (S,)
+            'K_pix': torch.from_numpy(K.astype(np.float32)),            # (3,3)
         }
+
+        if self.return_extrinsics:
+            sample['R_pix'] = torch.from_numpy(data['R'][p].astype(np.float32))
+            sample['t_pix'] = torch.from_numpy(data['t'][p].astype(np.float32))
+
+        return sample
+
 
 # ---------- MODEL ----------
 class PositionalEncoding(nn.Module):
@@ -167,17 +223,21 @@ def full_reprojection_loss(pred3d, x2d, K, R, t):
 
 # ---------- TRAINING LOOP ----------
 def train(args):
+    print("start training")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+    
+    print("loading dataset")
     # load full dataset and split
     full_ds = AugmentedNPZDataset(args.data)
     N = len(full_ds)
     N_val = int(0.1 * N)
     N_train = N - N_val
     train_ds, val_ds = random_split(full_ds, [N_train, N_val])
-
-    train_loader = DataLoader(train_ds, batch_size=args.batch, shuffle=True, num_workers=4)
+    
+    print("dataset loaded, configuring loaders")
+    train_loader = DataLoader(train_ds, batch_size=args.batch, shuffle=True, num_workers=2)
     val_loader   = DataLoader(val_ds,   batch_size=args.batch)
+    print("data loaders configurd, instanciating Trnsformer")
 
     # model, optimizer, scheduler
     model = TransformerLifter().to(device)
@@ -191,6 +251,7 @@ def train(args):
 
     best_val = float('inf')
     n_lifters = 0
+    print("starting learning loop")
     for epoch in range(1, args.epochs+1):
         # --- TRAIN ---
         model.train()
@@ -265,7 +326,7 @@ def train(args):
             best_val = vm
             torch.save(model.state_dict(), f"best_lifter{n_lifters}.pt")
             print(f"→ Saved best model (Val MPJPE={best_val:.4f} m)")
-            n_lifters+=n_lifters
+            n_lifters=n_lifters+1
 
     print("Training done.")
 

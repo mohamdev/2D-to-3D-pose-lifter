@@ -7,7 +7,7 @@ import cv2
 import pandas as pd
 
 # --- USER CONFIG ---
-M_EXTR       = 30               # number of distinct extrinsics per clip
+M_EXTR       = 50               # number of distinct extrinsics per clip
 L_INTR       = 10               # number of distinct intrinsics per extrinsic
 IMG_W, IMG_H = 1920, 1080      # synthetic image resolution
 F_MIN, F_MAX = 800, 1400       # focal-length range (px)
@@ -16,7 +16,7 @@ MARGIN       = 1.1             # safety margin on d_min
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 CSV_DIR = os.path.join(PROJECT_ROOT, 'amass', 'smplh', 'joint_segment_data')
-OUT_DIR = os.path.join(PROJECT_ROOT, 'amass', 'smplh', 'augmented_npz_grid')
+OUT_DIR = os.path.join(PROJECT_ROOT, 'amass', 'smplh', 'augmented_npz_grid_new')
 os.makedirs(OUT_DIR, exist_ok=True)
 
 print("CSV_DIR:", CSV_DIR)

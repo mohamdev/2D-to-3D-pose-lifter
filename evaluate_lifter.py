@@ -7,9 +7,10 @@ import pandas as pd
 import torch
 from glob import glob
 from tqdm import tqdm
+from typing import Tuple
 
 # import your model and dataset classes & loss
-from train_lifter import TransformerLifter, mpjpe
+from train_lifter_ddp import TransformerLifter, mpjpe
 
 JOINT_NAMES = [
     'r_shoulder','l_shoulder',
@@ -131,9 +132,10 @@ def evaluate(args):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # load model
-    model = TransformerLifter().to(device)
-    ckpt = torch.load(args.model, map_location=device)
-    model.load_state_dict(ckpt)
+    model      = TransformerLifter().to(device)
+    checkpoint = torch.load(args.model, map_location=device)
+    state_dict = checkpoint.get('model_state_dict', checkpoint)
+    model.load_state_dict(state_dict)
 
     # iterate over all npz files in data folder
     rows = []
