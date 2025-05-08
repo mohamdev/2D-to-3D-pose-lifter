@@ -292,14 +292,15 @@ def main():
                 lb = (bp-bt).abs().mean()
                 lrp= full_reprojection_loss(pred, x2d, Kpix, Rpix, tpix)
                 lr = lrp / IMG_W
-                loss = lm + lb
+                loss = lm + lb + 1e-2*lr
+                # print("lb loss:", lb)
             if scaler:
                 scaler.scale(loss).backward(); scaler.step(opt); scaler.update()
             else:
                 loss.backward(); opt.step()
             train_losses.append((lm.item(), lb.item(), lr.item()))
             if rank==0:
-                pbar.set_postfix({'MPJPE':f"{lm.item():.4f}",'Bone':f"{lb.item():.4f}",'Reproj(px)':f"{lrp.item():.4f}"})
+                pbar.set_postfix({'MPJPE':f"{lm.item():.4f}",'Bone':f"{lb.item()}",'Reproj(px)':f"{lrp.item():.4f}"})
         sched.step()
         tm,tb,tr=np.mean(train_losses,axis=0)
         if rank==0:
@@ -332,7 +333,7 @@ def main():
                       'scheduler_state_dict':sched.state_dict(),
                       'best_val':best_val}
                 if scaler: ckpt['scaler_state_dict']=scaler.state_dict()
-                torch.save(ckpt,f"best_lifter_{D_MODEL}_ddp.pt")
+                torch.save(ckpt,f"best_lifter_{D_MODEL}_ddp_epoch{epoch}.pt")
                 print(f"→ Saved best model (Val MPJPE={best_val:.4f})")
     if world_size>1: dist.destroy_process_group()
 
