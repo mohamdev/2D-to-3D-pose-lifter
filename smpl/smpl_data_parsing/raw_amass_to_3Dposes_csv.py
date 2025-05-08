@@ -35,9 +35,16 @@ joint_defs = {
     'r_ankle'   : ['r_ankle', 'r_mankle'],
     'l_ankle'   : ['l_ankle', 'l_mankle'],
 }
+import os
+import traceback
+import numpy as np
+import pandas as pd
+import torch
+# from smplx import BodyModel
+
 
 def compute_and_save(npz_path: str, file_id: int):
-    """Load a single .npz, compute joints & segments, save CSV with a file_id column."""
+    """Load a single .npz, compute joints & segments, save CSV with a file_id column,"""
     motion_name = os.path.splitext(os.path.basename(npz_path))[0]
     print(f"Processing [{file_id}] {motion_name}…")
     try:
@@ -65,26 +72,55 @@ def compute_and_save(npz_path: str, file_id: int):
         # 4) Extract raw marker trajectories
         marker_trajs = {name: vertices[:, idx, :] for name, idx in marker_list}
 
-        # 5) Compute joint centers and center them on the hip midpoint
+        # 5) Compute joint centers
+        joints = {}
+        for jname, mlist in joint_defs.items():
+            stacks = [marker_trajs[m] for m in mlist]
+            joints[jname] = np.stack(stacks, axis=0).mean(axis=0)
+
+        # 5a) Center each frame on the hip midpoint
+        hip_mid = (joints['r_hip'] + joints['l_hip']) / 2.0
+        for jname, traj in joints.items():
+            joints[jname] = traj - hip_mid
+
+        # 5b) Build a static "hip frame" from the first frame
+        #    Y axis: left hip -> right hip
+        r0 = joints['r_hip'][0]
+        l0 = joints['l_hip'][0]
+        y_axis = r0 - l0
+        y_axis /= np.linalg.norm(y_axis) + 1e-8
+
+        #    Z axis: mid hip -> mid shoulders
+        shoulder_mid0 = (joints['r_shoulder'][0] + joints['l_shoulder'][0]) * 0.5
+        z_axis = shoulder_mid0.copy()
+        z_axis /= np.linalg.norm(z_axis) + 1e-8
+
+        #    X axis: cross(Y, Z)
+        x_axis = np.cross(y_axis, z_axis)
+        x_axis /= np.linalg.norm(x_axis) + 1e-8
+
+        #    Re-orthonormalize Z to ensure right-handed frame
+        z_axis = np.cross(x_axis, y_axis)
+        z_axis /= np.linalg.norm(z_axis) + 1e-8
+
+        #    Rotation matrix: rows = [X, Y, Z]
+        R = np.stack([x_axis, y_axis, z_axis], axis=0)
+
+        # 5c) Rotate all joints into the hip frame
+        for jname, traj in joints.items():
+            joints[jname] = traj.dot(R.T)
+
+        # 6) Prepare output data dictionary
         data = {
             'file_id': np.full(num_frames, file_id, dtype=int),
             'Frame'  : np.arange(num_frames, dtype=int)
         }
-        joints = {}
-        for jname, mlist in joint_defs.items():
-            stacks = [marker_trajs[m] for m in mlist]
-            joint_pos = np.stack(stacks, axis=0).mean(axis=0)
-            joints[jname] = joint_pos
-
-        hip_mid = (joints['r_hip'] + joints['l_hip']) / 2.0
         for jname, traj in joints.items():
-            centered = traj - hip_mid
-            data[f'{jname}_x'] = centered[:, 0]
-            data[f'{jname}_y'] = centered[:, 1]
-            data[f'{jname}_z'] = centered[:, 2]
-            joints[jname] = centered
+            data[f'{jname}_x'] = traj[:, 0]
+            data[f'{jname}_y'] = traj[:, 1]
+            data[f'{jname}_z'] = traj[:, 2]
 
-        # 6) Compute mean segment lengths
+        # 7) Compute mean segment lengths
         def dist(a: np.ndarray, b: np.ndarray) -> np.ndarray:
             return np.linalg.norm(a - b, axis=1)
 
@@ -121,7 +157,7 @@ def compute_and_save(npz_path: str, file_id: int):
         for name, val in consts.items():
             data[name] = np.full(num_frames, val, dtype=float)
 
-        # 7) Save to CSV
+        # 8) Save to CSV
         df      = pd.DataFrame(data)
         out_csv = os.path.join(out_dir, f'{file_id}_{motion_name}_joints_segments.csv')
         df.to_csv(out_csv, index=False)
@@ -139,6 +175,8 @@ if __name__ == "__main__":
         for fname in files:
             if fname.lower().endswith('.npz'):
                 all_npz_paths.append(os.path.join(root, fname))
+
+    all_npz_paths = all_npz_paths[:5]
 
     all_npz_paths.sort()
 

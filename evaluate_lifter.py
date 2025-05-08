@@ -122,7 +122,7 @@ def predict_full_trajectory(data, model, device):
                 # accumulate
                 pred_acc[start:end] += pred_np
                 count_acc[start:end] += 1.0
-
+            print("mean error:", np.mean(np.array(errors)))
     # average overlapping windows
     pred_traj = pred_acc / count_acc
     gt_traj   = data['joints_3d']  # (F,J,3)
