@@ -146,7 +146,7 @@ def evaluate(args):
         data = np.load(npz_path)
         gt_traj, pred_traj, times, errors = predict_full_trajectory(data, model, device)
 
-        plot_all_joint_trajectories(gt_traj, pred_traj, JOINT_NAMES)
+        # plot_all_joint_trajectories(gt_traj, pred_traj, JOINT_NAMES)
         F, J, _ = gt_traj.shape
         # record
         for f in range(F):
