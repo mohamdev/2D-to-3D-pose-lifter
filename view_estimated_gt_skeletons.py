@@ -21,7 +21,7 @@ import torch
 import pinocchio as pin
 from pinocchio.visualize import GepettoVisualizer
 
-from train_lifter_ddp import TransformerLifter
+from train_lifter_ddp_dynamic import TransformerLifter
 
 # ----------------------------------------
 # configuration
