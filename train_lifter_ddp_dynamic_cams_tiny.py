@@ -345,5 +345,5 @@ def main():
                 print(f"→ Saved best model (Val MPJPE={best_val:.4f})")
     if world_size>1: dist.destroy_process_group()
 
-
-main()
+if __name__ == '__main__':
+    main()
