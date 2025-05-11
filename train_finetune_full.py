@@ -208,7 +208,6 @@ def full_reprojection_loss(pred3d, x2d, K, R, t):
 
 # ─── MAIN ───────────────────────────────────────────────────────────────────────
 def main():
-    print("entering main")
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', required=True)
     parser.add_argument('--epochs', type=int, default=50)
@@ -218,7 +217,6 @@ def main():
     parser.add_argument('--amp',action='store_true')
     args = parser.parse_args()
 
-    print("parsed args")
     # init DDP or single
     if has_dist and 'RANK' in os.environ:
         dist.init_process_group('nccl', init_method='env://')
@@ -230,13 +228,12 @@ def main():
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         local_rank=0; rank=0; world_size=1
 
-    print("inited ddp")
     # dataset
     full_ds = DynamicPoseDataset(args.data, window=args.window, seed=0)
     N = len(full_ds); N_val = int(0.01*N); N_train=N-N_val
     g = torch.Generator().manual_seed(0)
     train_ds, val_ds = random_split(full_ds, [N_train,N_val], generator=g)
-    print("dataset ok")
+
     # loaders
     if world_size>1:
         train_sampler=DistributedSampler(train_ds, num_replicas=world_size, rank=rank, shuffle=True)
@@ -249,7 +246,6 @@ def main():
     val_loader  =DataLoader(val_ds,   batch_size=args.batch, sampler=val_sampler,
                              shuffle=False, num_workers=nw, pin_memory=True)
 
-    print("dataloaders ok")
     # model
     model = TransformerLifter().to(device)
     if world_size>1:
@@ -257,7 +253,7 @@ def main():
     opt=optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
     sched=optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     scaler=torch.cuda.amp.GradScaler() if args.amp else None
-    print("model ok")
+
     # resume
     start_epoch=1; best_val=float('inf')
     if args.checkpoint:
@@ -273,12 +269,8 @@ def main():
     if world_size>1:
         dist.barrier()
 
-    print("resumed ckpt")
     # train/val loops
-    print("start epoch:", start_epoch)
-    print("start epoch:", args.epochs+1)
-    for epoch in range(start_epoch, start_epoch+args.epochs+1):
-        print("enterign training loop")
+    for epoch in range(start_epoch, args.epochs+1):
         if world_size>1: train_sampler.set_epoch(epoch)
         model.train(); train_losses=[]
         pbar=tqdm(train_loader,desc=f"Epoch {epoch} [Train]",disable=(rank!=0),ncols=120)
@@ -345,5 +337,5 @@ def main():
                 print(f"→ Saved best model (Val MPJPE={best_val:.4f})")
     if world_size>1: dist.destroy_process_group()
 
-
-main()
+if __name__=='__main__':
+    main()

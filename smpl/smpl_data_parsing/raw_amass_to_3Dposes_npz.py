@@ -11,7 +11,7 @@ from human_body_prior.tools.omni_tools import copy2cpu as c2c
 device       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 raw_dir      = os.path.join(project_root, 'amass', 'smplh', 'raw_npz_data')
-out_root     = os.path.join(project_root, 'amass', 'smplh', 'amass_3D_poses')
+out_root     = os.path.join(project_root, 'amass', 'smplh', 'full_amass_3D_poses')
 
 # Split directories
 def prepare_dirs(out_root):
